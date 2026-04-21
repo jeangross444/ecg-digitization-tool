@@ -377,9 +377,9 @@ def ecg_to_csv(image_name, template_name, csv_name, config_dict):
     return ecg_df
 
 # Main program 
-filename = 'bucket/img20250221_12050781'
+filename = 'ecg1'
 image_name = filename + '.png'
-template_name = 'bucket/template.png'
+template_name = 'pul.png'
 
 csv_name =filename + '.csv'
 layout = (3,4)

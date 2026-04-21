@@ -432,7 +432,7 @@ def process_line(line_number, labeled_line, offset, line_leads, config_dict, ver
 
         roi = (labeled_line==label)
        
-        sl = ndimage.find_objects(roi)
+        sl = ndimage.find_objects(roi.astype(np.int32))
         if len(sl)==0:
             continue
         #print ("INFO: sl  = {}.".format(sl))
