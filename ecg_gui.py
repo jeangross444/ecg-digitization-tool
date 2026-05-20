@@ -31,7 +31,7 @@ class ECGApp:
         self.layout      = tk.StringVar(value="(3,4)")
         self.pulse       = tk.StringVar(value="[0,1,2]")
         self.rhythm      = tk.IntVar(value=4)
-        self.verbose     = tk.BooleanVar(value=False)
+        self.verbose     = tk.IntVar(value=0)
         self.show_images = tk.BooleanVar(value=False)
 
         # ── Advanced ───────────────────────────────────────────
@@ -140,12 +140,13 @@ class ECGApp:
                    textvariable=self.rhythm, width=10
                    ).grid(row=5, column=1, padx=5, pady=4)
 
-        ttk.Checkbutton(basic_frame, text="Verbose",
-                        variable=self.verbose
-                        ).grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Label(basic_frame, text="Verbose (0-3)").grid(row=6, column=0, sticky="w", pady=5)
+        tk.Spinbox(basic_frame, from_=0, to=3,
+                   textvariable=self.verbose, width=5
+                   ).grid(row=6, column=1, sticky="w", padx=5, pady=5)
         ttk.Checkbutton(basic_frame, text="Show Images",
                         variable=self.show_images
-                        ).grid(row=6, column=1, sticky="w", pady=5)
+                        ).grid(row=7, column=0, sticky="w", pady=5)
 
         # ── Advanced config ───────────────────────────────────
         adv_frame = ttk.LabelFrame(left_panel, text="Configuração Avançada")
@@ -277,6 +278,29 @@ class ECGApp:
             lambda e: self._debug_tk_canvas.configure(
                 scrollregion=self._debug_tk_canvas.bbox("all")))
 
+        # Mouse scroll — cross-platform
+        def _on_mousewheel(event):
+            # Windows/macOS: event.delta; Linux: Button-4/5
+            if event.num == 4:
+                self._debug_tk_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self._debug_tk_canvas.yview_scroll(1, "units")
+            else:
+                self._debug_tk_canvas.yview_scroll(
+                    int(-1 * (event.delta / 120)), "units")
+
+        # Bind to canvas and inner frame so scroll works wherever the mouse is
+        for widget in (self._debug_tk_canvas, self._debug_inner):
+            widget.bind("<MouseWheel>", _on_mousewheel)   # Windows / macOS
+            widget.bind("<Button-4>",   _on_mousewheel)   # Linux scroll up
+            widget.bind("<Button-5>",   _on_mousewheel)   # Linux scroll down
+
+        # Also propagate scroll from any child widget added later
+        self._debug_scroll_handler = _on_mousewheel
+
+        # Buffer that accumulates print() lines between figure calls
+        self._pending_log_lines = []
+
     # =========================================================
     # DEBUG CALLBACK  (called by edt.py / edt_utils.py)
     # =========================================================
@@ -284,19 +308,51 @@ class ECGApp:
     def add_debug_figure(self, fig):
         """
         Receive a matplotlib Figure from the processing pipeline and render
-        it inside the Debug tab.  Called only when verbose is active.
+        it inside the Debug tab, with the accumulated log lines on the right.
+        Called only when verbose is active.
         """
-        frame = ttk.Frame(self._debug_inner,
-                          relief="solid", borderwidth=1)
-        frame.pack(fill="x", pady=4, padx=6)
+        # Outer row frame
+        row_frame = ttk.Frame(self._debug_inner, relief="solid", borderwidth=1)
+        row_frame.pack(fill="x", pady=6, padx=6)
 
-        canvas = FigureCanvasTkAgg(fig, master=frame)
+        # Left: matplotlib figure
+        fig_frame = ttk.Frame(row_frame)
+        fig_frame.pack(side="left", fill="both", expand=True)
+
+        canvas = FigureCanvasTkAgg(fig, master=fig_frame)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="x")
-
+        canvas.get_tk_widget().pack(fill="both", expand=True)
         self._debug_canvases.append(canvas)   # prevent GC
 
-        # Scroll to the bottom so the latest figure is visible
+        # Right: log text for messages printed before this figure
+        log_frame = ttk.Frame(row_frame, width=340)
+        log_frame.pack(side="left", fill="y", padx=(4, 4), pady=4)
+        log_frame.pack_propagate(False)
+
+        log_text = tk.Text(
+            log_frame,
+            wrap="word",
+            bg="#1e1e1e",
+            fg="#d4d4d4",
+            font=("Courier", 12),
+            relief="flat",
+            state="normal",
+        )
+        log_text.pack(fill="both", expand=True)
+
+        # Drain the pending log buffer into this widget
+        content = "".join(self._pending_log_lines)
+        log_text.insert("1.0", content if content.strip() else "(sem mensagens)")
+        log_text.configure(state="disabled")
+        self._pending_log_lines.clear()
+
+        # Bind scroll to every new widget so mouse works anywhere on the row
+        for w in (row_frame, fig_frame, canvas.get_tk_widget(), log_frame, log_text):
+            w.bind("<MouseWheel>", self._debug_scroll_handler)
+            w.bind("<Button-4>",   self._debug_scroll_handler)
+            w.bind("<Button-5>",   self._debug_scroll_handler)
+
+        # Scroll to the bottom
         self._debug_inner.update_idletasks()
         self._debug_tk_canvas.configure(
             scrollregion=self._debug_tk_canvas.bbox("all"))
@@ -307,6 +363,7 @@ class ECGApp:
         for widget in self._debug_inner.winfo_children():
             widget.destroy()
         self._debug_canvases.clear()
+        self._pending_log_lines.clear()
 
     # =========================================================
     # LOAD IMAGE / TEMPLATE
@@ -353,11 +410,27 @@ class ECGApp:
             time_lead       = 2.5
             num_sampling_points = int(time_lead * self.sample_frequency.get())
 
-            verbose_active = self.verbose.get()
+            verbose_active = self.verbose.get() > 0
 
             # Clear previous debug figures before a new run
             if verbose_active:
                 self.clear_debug()
+
+            # Redirect stdout → pending log buffer (GUI mode)
+            import sys
+            _orig_stdout = sys.stdout
+
+            class _LogBuffer:
+                def __init__(self, lines):
+                    self._lines = lines
+                def write(self, msg):
+                    if msg:
+                        self._lines.append(msg)
+                def flush(self):
+                    pass
+
+            if verbose_active:
+                sys.stdout = _LogBuffer(self._pending_log_lines)
 
             config_dict = {
                 # ECG structure
@@ -365,7 +438,7 @@ class ECGApp:
                 'pulse':           pulse,
                 'rhythm':          self.rhythm.get(),
                 # Debug
-                'verbose':         1 if verbose_active else 0,
+                'verbose':         self.verbose.get(),
                 'show_images':     self.show_images.get(),
                 'plot_callback':   self.add_debug_figure if verbose_active else None,
                 # Processing
@@ -415,8 +488,27 @@ class ECGApp:
             messagebox.showinfo("Sucesso", "ECG processado com sucesso.")
 
         except Exception as e:
+            sys.stdout = _orig_stdout
             messagebox.showerror("Erro", str(e))
             raise   # re-raise so the full traceback appears in the terminal
+
+        finally:
+            sys.stdout = _orig_stdout
+            # Flush any remaining log lines that came after the last figure
+            if verbose_active and self._pending_log_lines:
+                row_frame = ttk.Frame(self._debug_inner, relief="solid", borderwidth=1)
+                row_frame.pack(fill="x", pady=6, padx=6)
+                log_text = tk.Text(
+                    row_frame, wrap="word", bg="#1e1e1e", fg="#d4d4d4",
+                    font=("Courier", 12), relief="flat", state="normal",
+                )
+                log_text.pack(fill="both", expand=True, padx=4, pady=4)
+                log_text.insert("1.0", "".join(self._pending_log_lines))
+                log_text.configure(state="disabled")
+                self._pending_log_lines.clear()
+                self._debug_inner.update_idletasks()
+                self._debug_tk_canvas.configure(
+                    scrollregion=self._debug_tk_canvas.bbox("all"))
 
     # =========================================================
     # PLOT RESULT  (clinical grid layout inside Result tab)
