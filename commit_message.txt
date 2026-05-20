@@ -1,0 +1,33 @@
+refactor(edt): suporte a GUI, correção de bugs e limpeza de código
+
+BREAKING CHANGE: ecg_to_csv() agora retorna um dicionário em vez de um DataFrame.
+  Antes: df = ecg_to_csv(...)
+  Agora: resultado = ecg_to_csv(...); df = resultado["df"]
+
+--- Correções de bugs ---
+
+* Corrige NameError: sliced_labeled_line não era inicializado quando a linha não tinha pulso
+* Corrige sys.exit(0) → raise ValueError para que a GUI possa capturar o erro de imagem
+* Corrige typo silencioso config_dict['pulse_per_sec '] (espaço extra na chave)
+* Corrige chaves duplicadas no config_dict (pulse_width_mm, pulse_per_mv, etc.)
+* Corrige verificação de sanidade do template: testava `image is None` em vez de `template is None`
+* Corrige blocos if/if/if das estratégias → if/elif/else (evita execução dupla)
+
+--- Novas funcionalidades ---
+
+* Adiciona função auxiliar _show(fig, plot_callback) para redirecionar plots à GUI ou plt.show()
+* Adiciona flag show_images no config_dict (suprime todos os plots quando False)
+* Adiciona plot_callback repassado para display_segments(), process_line(), print_line_dict()
+* Adiciona import de pytesseract e remove_text do edt_utils
+* Adiciona docstring completa documentando todos os parâmetros do config_dict
+* Adiciona artefatos intermediários no retorno: foreground, binary, image_gray
+
+--- Melhorias ---
+
+* Protege chamada de ecg_to_csv() com if __name__ == "__main__" (seguro para importar)
+* Calcula wt/ht do template uma única vez antes do loop, não a cada iteração
+* Converte num_sampling_points para int() (era float)
+* Unifica dois imports separados do edt_utils em um único import agrupado
+* Remove variáveis não utilizadas: line_copy_width/height, blank_image, slices_y
+* Remove código comentado antigo e TODOs já resolvidos
+* Define verbose=0 como padrão e atualiza nomes de arquivo para ecg2/pul.png
